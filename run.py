@@ -5,13 +5,17 @@ run.py - BSL AI Script Generator CLI
 Main entry point for the AI module. Takes a natural language prompt
 and generates a complete .bsl script with syntax validation.
 
+Supports saving and resuming training state so you can train,
+stop, and resume later.
+
 Usage:
-    python AI/run.py "create a script that backs up my home directory"
-    python AI/run.py "show system information" --output system-info.bsl
-    python AI/run.py "monitor disk space" --check
-    python AI/run.py --train          # Show training corpus summary
-    python AI/run.py --interactive    # Interactive mode
-    python AI/run.py --help           # Show this help
+    python run.py "create a script that backs up my home directory"
+    python run.py "show system information" --output system-info.bsl
+    python run.py "monitor disk space" --check
+    python run.py --train                    # Show training corpus summary
+    python run.py --save-state state.json    # Save training state
+    python run.py --resume state.json        # Resume from saved state
+    python run.py --interactive              # Interactive mode
 """
 
 import sys
@@ -31,11 +35,13 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""\
             Examples:
-              python AI/run.py "create a python virtual environment"
-              python AI/run.py "backup my project directory" --output backup.bsl
-              python AI/run.py "check disk usage" --check
-              python AI/run.py --interactive
-              python AI/run.py --train
+              python run.py \"create a python virtual environment\"
+              python run.py \"backup my project directory\" --output backup.bsl
+              python run.py \"check disk usage\" --check
+              python run.py --interactive
+              python run.py --train
+              python run.py --save-state state.json
+              python run.py --resume state.json --train
         """),
     )
 
@@ -80,26 +86,53 @@ def main():
         help="Only output the generated script (no diagnostics)",
     )
 
+    # ── Training continuation flags ──
+    parser.add_argument(
+        "--save-state",
+        metavar="FILE",
+        help="Save the current training state to FILE for later resumption",
+    )
+    parser.add_argument(
+        "--resume",
+        metavar="FILE",
+        help="Resume from a previously saved training state FILE",
+    )
+
     args = parser.parse_args()
+
+    # ── Load trainer (with optional resume) ──
+    if args.resume:
+        trainer = BSLAITrainer.load_state(args.resume)
+    else:
+        trainer = BSLAITrainer()
 
     # ── Show training summary ──
     if args.train:
         if not args.quiet:
-            trainer = BSLAITrainer()
             summary = trainer.train_summary()
             print(f"BSL AI Trainer v{summary['version']}")
             print(f"Trained at: {summary['trained_at']}")
             print(f"Training examples: {summary['corpus']['total_examples']}")
+            if summary['corpus']['total_custom'] > 0:
+                print(f"  (includes {summary['corpus']['total_custom']} custom examples)")
             print(f"Tags: {len(summary['corpus']['tags'])}")
             print(f"Template patterns: {summary['templates']['count']}")
             print(f"Known instructions: {summary['instructions']['count']}")
             print(f"Dependencies tracked: {summary['corpus']['total_dependencies']}")
-            print(f"\nAvailable tags: {', '.join(summary['corpus']['tags'])}")
+            print(f"Match history: {summary['training_metrics']['total_matches']} total matches")
+            print(f"\\nAvailable tags: {', '.join(summary['corpus']['tags'])}")
+            if summary['corpus']['custom_names']:
+                print(f"Custom examples: {', '.join(summary['corpus']['custom_names'])}")
+        return
+
+    # ── Save state and exit (no generation) ──
+    if args.save_state and not args.prompt:
+        trainer.save_state(args.save_state)
         return
 
     # ── Interactive mode ──
     if args.interactive:
-        interactive_loop(args)
+        interactive_loop(args, trainer)
         return
 
     # ── Generate from prompt ──
@@ -109,7 +142,7 @@ def main():
         sys.exit(1)
 
     prompt = " ".join(args.prompt)
-    result = generate_bsl(prompt, author=args.author)
+    result = generate_bsl(prompt, author=args.author, trainer=trainer)
 
     # ── Optional: Validate ──
     validation = None
@@ -143,9 +176,16 @@ def main():
         if save != "n":
             _write_to_file(result["name"], result["source"])
 
+    # ── Auto-save state if --save-state was given ──
+    if args.save_state:
+        trainer.save_state(args.save_state)
 
-def interactive_loop(args):
+
+def interactive_loop(args, trainer=None):
     """Run an interactive prompt loop."""
+    if trainer is None:
+        trainer = BSLAITrainer()
+
     print("=" * 60)
     print("  BSL AI Generator - Interactive Mode")
     print("=" * 60)
@@ -173,15 +213,31 @@ def interactive_loop(args):
             continue
 
         if prompt.lower() == "train":
-            trainer = BSLAITrainer()
             summary = trainer.train_summary()
             print(f"\nCorpus: {summary['corpus']['total_examples']} examples, "
                   f"{summary['corpus']['total_tags']} tags, "
                   f"{summary['templates']['count']} templates\n")
             continue
 
+        if prompt.lower().startswith("save"):
+            # Save state from interactive mode
+            parts = prompt.split(None, 1)
+            filepath = parts[1] if len(parts) > 1 else "bsl-ai-state.json"
+            trainer.save_state(filepath)
+            continue
+
+        if prompt.lower().startswith("export"):
+            # Export from interactive mode
+            parts = prompt.split(None, 1)
+            filepath = parts[1] if len(parts) > 1 else "bsl-training.jsonl"
+            if filepath.endswith(".jsonl"):
+                trainer.export_training_dataset_jsonl(filepath)
+            else:
+                trainer.export_corpus_json(filepath)
+            continue
+
         # Generate
-        result = generate_bsl(prompt, author=args.author)
+        result = generate_bsl(prompt, author="AI Generated", trainer=trainer)
         validation = validate_bsl(result["source"])
 
         if validation.is_valid:
@@ -245,6 +301,8 @@ def _print_interactive_help():
     print("    quit        Exit interactive mode")
     print("    help        Show this help")
     print("    train       Show training corpus summary")
+    print("    save        Save training state (save <file> or save bsl-ai-state.json)")
+    print("    export      Export corpus (export <file> or export bsl-training.jsonl)")
     print()
 
 

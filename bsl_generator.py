@@ -5,9 +5,7 @@ Takes a natural language prompt and generates a valid .bsl script.
 Uses pattern matching, template assembly, and the training corpus
 to create scripts that match the user's request.
 
-Usage:
-    from bsl_generator import generate_bsl
-    script = generate_bsl("create a script that monitors disk space")
+Supports a trainer object for state tracking and continuation.
 """
 
 import re
@@ -55,7 +53,7 @@ def score_prompt_against_example(prompt: str, example: dict) -> int:
     score = 0
 
     # Check prompt_keywords
-    for keyword in example["prompt_keywords"]:
+    for keyword in example.get("prompt_keywords", []):
         if keyword.lower() in prompt_lower:
             score += 10
         # Partial keyword match
@@ -64,18 +62,19 @@ def score_prompt_against_example(prompt: str, example: dict) -> int:
             score += 3
 
     # Check description
-    desc_words = example["description"].lower().split()
+    desc = example.get("description", "")
+    desc_words = desc.lower().split()
     for word in desc_words:
         if len(word) > 3 and word in prompt_lower:
             score += 2
 
     # Check name
-    name = example["name"].lower().replace("-", " ")
+    name = example.get("name", "").lower().replace("-", " ")
     if name in prompt_lower:
         score += 15
 
     # Check tags
-    for tag in example["tags"]:
+    for tag in example.get("tags", []):
         if tag.lower() in prompt_lower:
             score += 5
 
@@ -88,7 +87,7 @@ def detect_required_args(prompt: str, example: dict) -> List[str]:
     Returns the list of argument values (or empty if none detected).
     """
     # Look for patterns like "for <name>", "called <name>", "<name> directory"
-    match = re.search(r'(?:for|called|named)\s+[\'"]?(\w+)[\'"]?', prompt, re.IGNORECASE)
+    match = re.search(r'(?:for|called|named)\s+[\'\"]?(\w+)[\'\"]?', prompt, re.IGNORECASE)
     if match:
         return [match.group(1)]
     return []
@@ -131,9 +130,13 @@ def detect_output_preference(prompt: str) -> bool:
 
 # ── Script Generation ──────────────────────────────────────────────────────
 
-def generate_bsl(prompt: str, author: str = "Buffy Community") -> dict:
+def generate_bsl(prompt: str, author: str = "Buffy Community",
+                 trainer=None) -> dict:
     """
     Generate a .bsl script from a natural language prompt.
+
+    If a trainer is provided (with custom corpus), it uses the trainer's
+    combined corpus (built-in + custom) for matching.
 
     Returns a dict with:
       - name: suggested file name
@@ -144,11 +147,16 @@ def generate_bsl(prompt: str, author: str = "Buffy Community") -> dict:
       - matched_example: name of the best-matching training example
       - match_score: confidence score (higher = better match)
     """
+    # Get the training corpus from the trainer if available, else use defaults
+    corpus = TRAINING_EXAMPLES
+    if trainer:
+        corpus = trainer.corpus + trainer.custom_examples
+
     # Find the best-matching training example
     best_example = None
     best_score = 0
 
-    for example in TRAINING_EXAMPLES:
+    for example in corpus:
         score = score_prompt_against_example(prompt, example)
         if score > best_score:
             best_score = score
@@ -163,7 +171,7 @@ def generate_bsl(prompt: str, author: str = "Buffy Community") -> dict:
     description = _generate_description(prompt)
 
     # Generate name from prompt
-    name = _generate_name(prompt)
+    name = _generate_name(prompt, corpus)
 
     # If we have a good match, adapt the example
     if best_example and best_score >= 10:
@@ -191,9 +199,14 @@ def generate_bsl(prompt: str, author: str = "Buffy Community") -> dict:
     # Determine dependencies
     dependencies = []
     if best_example:
-        dependencies = best_example["dependencies"]
+        dependencies = best_example.get("dependencies", [])
     dependencies.extend(shell_commands)
     dependencies = list(set(dependencies))
+
+    # Record match for training analytics
+    if trainer and best_example:
+        trainer.record_match(best_example["name"])
+        trainer.record_prompt(prompt)
 
     return {
         "name": f"{name}.bsl",
@@ -208,22 +221,18 @@ def generate_bsl(prompt: str, author: str = "Buffy Community") -> dict:
 
 def _generate_description(prompt: str) -> str:
     """Generate a concise description from the prompt."""
-    # Clean and truncate
     description = prompt.strip()
     description = re.sub(r'\s+', ' ', description)
     if len(description) > 80:
         description = description[:77] + "..."
-    # Capitalize first letter
     if description:
         description = description[0].upper() + description[1:]
     return description
 
 
-def _generate_name(prompt: str) -> str:
+def _generate_name(prompt: str, corpus: list = None) -> str:
     """Generate a kebab-case filename from the prompt."""
-    # Extract key action words
     words = re.findall(r'\b(\w+)\b', prompt.lower())
-    # Filter out common stop words
     stop_words = {"a", "an", "the", "for", "to", "in", "of", "on", "at", "by",
                   "with", "from", "up", "that", "this", "is", "it", "be", "and",
                   "or", "but", "not", "script", "that", "will", "can", "all",
@@ -237,13 +246,13 @@ def _generate_name(prompt: str) -> str:
     else:
         name = "my-script"
 
-    # Remove trailing hyphens
     name = name.strip("-")
 
     # Avoid duplicate names with existing examples
-    existing_names = [ex["name"] for ex in TRAINING_EXAMPLES]
-    if name in existing_names:
-        name = name + "-custom"
+    if corpus:
+        existing_names = [ex.get("name", "") for ex in corpus]
+        if name in existing_names:
+            name = name + "-custom"
 
     return name
 
@@ -254,7 +263,7 @@ def _adapt_example(prompt: str, example: dict, name: str, description: str,
     Take a matching training example and adapt it to the user's prompt.
     Updates metadata, argument handling, and adds relevant comments.
     """
-    source = example["source"]
+    source = example.get("source", "")
 
     # Update DESCRIPTION
     source = re.sub(
@@ -282,9 +291,9 @@ def _adapt_example(prompt: str, example: dict, name: str, description: str,
         )
 
     # Add argument comments if the example expects args
-    if example["args"] and not args:
-        arg_comment = f"// Usage: buffy {name} <{' '.join(example['args'])}>\n"
-        # Insert after the metadata section
+    example_args = example.get("args", [])
+    if example_args and not args:
+        arg_comment = f"// Usage: buffy {name} <{' '.join(example_args)}>\n"
         source = re.sub(
             r'(OUTPUT = (?:true|false)\n)',
             r'\1' + '\n' + arg_comment,
@@ -298,10 +307,7 @@ def _adapt_example(prompt: str, example: dict, name: str, description: str,
 def _generate_from_scratch(prompt: str, name: str, description: str,
                            author: str, shell_commands: List[str],
                            args: List[str], output_visible: bool) -> str:
-    """
-    Generate a BSL script from scratch when no good example match exists.
-    Uses templates and patterns to build a valid script.
-    """
+    """Generate a BSL script from scratch when no good example match exists."""
     lines = []
 
     # ── Comments ──
@@ -344,7 +350,7 @@ def _generate_from_scratch(prompt: str, name: str, description: str,
     # ── Command execution ──
     for cmd in shell_commands:
         lines.append(f'WRITE "Running {cmd}..."')
-        if cmd == "python" or cmd == "python3":
+        if cmd in ("python", "python3"):
             lines.append(f'RUN "{cmd} --version"')
         elif cmd == "docker":
             lines.append("RUN \"docker info > /dev/null 2>&1 && echo 'Docker is running' || echo 'Docker is not running'\"")
