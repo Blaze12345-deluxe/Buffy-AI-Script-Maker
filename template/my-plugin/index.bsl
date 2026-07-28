@@ -1,0 +1,36 @@
+VERSION = "2026.07.28"
+AUTHOR = "Buffy Community"
+DESCRIPTION = "Default entry point for my-plugin. Shows help and available commands."
+OUTPUT = false
+
+CLEAR
+
+WRITE "========================================="
+WRITE "  My Plugin - Example Buffy Package"
+WRITE "========================================="
+WRITE ""
+WRITE "  Version: 1.0.0"
+WRITE "  Author:  Your Name Here"
+WRITE ""
+WRITE "-----------------------------------------"
+WRITE "  Usage"
+WRITE "-----------------------------------------"
+WRITE ""
+WRITE "  buffy my-plugin            Show this help"
+WRITE "  buffy my-plugin hello      Print a greeting"
+WRITE ""
+WRITE "-----------------------------------------"
+WRITE "  About"
+WRITE "-----------------------------------------"
+WRITE ""
+WRITE "  This is an example plugin package for"
+WRITE "  Buffy. Replace the scripts in this"
+WRITE "  directory with your own commands."
+WRITE ""
+WRITE "  For more information, see the"
+WRITE "  CREATING_PLUGINS.txt guide in the"
+WRITE "  template/ folder."
+WRITE ""
+WRITE "========================================="
+
+EXIT

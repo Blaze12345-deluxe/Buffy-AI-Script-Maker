@@ -1,0 +1,279 @@
+================================================================================
+              HOW TO CREATE A BUFFY PLUGIN (PACKAGE)
+================================================================================
+
+This guide explains everything you need to know to create your own
+Buffy plugin package and distribute it.
+
+
+1. WHAT IS A BUFFY PLUGIN?
+================================================================================
+
+A Buffy plugin is a package of .bsl scripts organized in a directory.
+Each package has a name, contains one or more .bsl command scripts,
+and can be installed with:
+
+  buffy --install <package-name>
+
+Packages are distributed through GitHub repositories. Buffy fetches
+an index.json from the repository to discover available packages,
+then downloads and installs the .bsl scripts.
+
+
+2. PACKAGE STRUCTURE
+================================================================================
+
+A plugin package is a directory that contains one or more .bsl files:
+
+  my-plugin/
+    index.bsl             Default command (runs when no subcommand given)
+    hello.bsl             Another command
+    hello.bsl.sha256      SHA-256 checksum for verification
+
+Each .bsl file should have a corresponding .sha256 file containing
+its SHA-256 checksum. Buffy uses these to verify file integrity
+during installation.
+
+The directory name (my-plugin) is the package name. Users install
+it with "buffy my-plugin" which runs index.bsl by default, or
+"buffy my-plugin hello" to run hello.bsl.
+
+
+3. WRITING A .bsl SCRIPT
+================================================================================
+
+Every .bsl script follows this format:
+
+  VERSION = "2026.07.28"          # Required: version date
+  AUTHOR = "Your Name"            # Required: creator name
+  DESCRIPTION = "What it does."   # Required: short description
+  OUTPUT = false                  # Required: show output? true/false
+
+  // Comments start with double slash
+  WRITE "Hello, World!"           # Display a message
+  RUN "echo Hello from shell"     # Run a shell command
+  WAIT 2                          # Pause for 2 seconds
+  WAIT "Press Enter..."           # Wait for user input
+
+  OUTPUT = true                   # Show output of next commands
+  RUN "ls -la"                    # This output will be visible
+  OUTPUT = false                  # Hide output again
+
+  EXIT                            # End the script
+
+Available instructions:
+  WRITE "text"        Display a message
+  RUN "command"       Execute a shell command
+  WAIT N             Pause for N seconds
+  WAIT "prompt"      Wait for Enter key
+  CLEAR               Clear the terminal
+  EXIT                Stop execution
+  OUTPUT = true/false  Toggle command output visibility
+
+Built-in variables (expanded by Buffy):
+  ${HOME}    - Home directory
+  ${USER}    - Current username
+  ${PWD}     - Current working directory
+  ${DATE}    - Current date (YYYY-MM-DD)
+  ${TIME}    - Current time (HH:MM:SS)
+  ${TEMP}    - System temp directory
+  ${1}-${N}  - Script arguments
+
+
+4. STEP-BY-STEP: CREATING YOUR FIRST PLUGIN
+================================================================================
+
+Step 1: Create the package directory
+---------------------------------
+  mkdir my-plugin
+
+Step 2: Create the default entry point script
+---------------------------------
+  Create my-plugin/index.bsl with this content:
+
+  VERSION = "2026.07.28"
+  AUTHOR = "Your Name"
+  DESCRIPTION = "Default command for my-plugin."
+  OUTPUT = false
+
+  WRITE "========================================="
+  WRITE "  My Plugin"
+  WRITE "========================================="
+  WRITE ""
+  WRITE "Usage: buffy my-plugin <command>"
+  WRITE ""
+  WRITE "Available commands:"
+  WRITE "  hello    Prints a greeting"
+  WRITE ""
+
+  EXIT
+
+Step 3: Create additional commands
+---------------------------------
+  Create my-plugin/hello.bsl with this content:
+
+  VERSION = "2026.07.28"
+  AUTHOR = "Your Name"
+  DESCRIPTION = "Prints a friendly greeting."
+  OUTPUT = false
+
+  WRITE "========================================="
+  WRITE "  Hello Command"
+  WRITE "========================================="
+  WRITE ""
+  WRITE "Hello, ${USER}! Welcome to my-plugin!"
+  WRITE "Today is ${DATE}."
+  WRITE ""
+
+  EXIT
+
+Step 4: Generate SHA-256 checksums
+---------------------------------
+  For each .bsl file, generate a checksum file:
+
+  cd my-plugin
+  sha256sum index.bsl > index.bsl.sha256
+  sha256sum hello.bsl > hello.bsl.sha256
+  cd ..
+
+  The .sha256 files contain the checksum and filename.
+  Buffy uses these to verify the files after download.
+
+Step 5: Create a repository index
+---------------------------------
+  If you want to distribute your plugin through a repository,
+  create an index.json file (see the index.json template in
+  this directory for the full format).
+
+  At minimum, your index.json should list:
+
+  {
+    "name": "my-plugin",
+    "description": "My custom Buffy plugin",
+    "version": "1.0.0",
+    "author": "Your Name",
+    "commands": ["index", "hello"],
+    "dependencies": []
+  }
+
+Step 6: Push to GitHub
+---------------------------------
+  1. Create a GitHub repository for your plugin collection
+  2. Push your package directory and index.json
+  3. Add the repository to Buffy:
+       buffy --repo https://github.com/your-username/your-repo
+  4. Install your plugin:
+       buffy --install my-plugin
+
+
+5. SINGLE-ARGUMENT COMMANDS (Aliases)
+================================================================================
+
+If your plugin has only one script, or you want a quick shortcut,
+you can add an alias so users can run:
+
+  buffy hello
+
+instead of:
+
+  buffy my-plugin hello
+
+To do this, users add an alias in their ~/.buffy/aliases.json:
+
+  {
+    "hello": "my-plugin"
+  }
+
+This tells Buffy that when someone types "buffy hello", it should
+look for hello.bsl inside the my-plugin package directory.
+
+
+6. PACKAGE INDEX.JSON FORMAT
+================================================================================
+
+The index.json file is the catalog for your repository. It lists
+all available packages with their metadata. Here's the full format:
+
+  {
+    "name": "my-plugin",
+    "description": "A short description of the package.",
+    "version": "1.0.0",
+    "author": "Your Name",
+    "commands": ["index", "hello", "other-command"],
+    "dependencies": ["git", "docker"],
+    "tags": ["utility", "example"],
+    "repository": "https://github.com/your-username/your-repo",
+    "install_path": "packages/my-plugin"
+  }
+
+Fields:
+  name          - Package name (must match directory name)
+  description   - Short description shown during install
+  version       - Package version (semver or date format)
+  author        - Creator name
+  commands      - List of .bsl files in this package (without .bsl)
+  dependencies  - System commands this package requires
+  tags          - Categories for discovery
+  repository    - Source repository URL
+  install_path  - Path within the repository to the package directory
+
+
+7. DISTRIBUTION OPTIONS
+================================================================================
+
+Option A: GitHub Repository (Recommended)
+---------------------------------
+  1. Create a public GitHub repo (e.g., Buffy-Plugins)
+  2. Push your index.json and packages/ directory
+  3. Users add your repo and install packages:
+       buffy --repo https://github.com/you/Buffy-Plugins
+       buffy --install my-plugin
+
+Option B: Local Filesystem
+---------------------------------
+  1. Place your package directory anywhere on your system
+  2. Install it directly:
+       buffy --install /path/to/my-plugin
+
+Option C: Single .bsl File
+---------------------------------
+  1. Create a single .bsl file
+  2. Install it:
+       buffy --install my-script.bsl
+
+
+8. BEST PRACTICES
+================================================================================
+
+- Use descriptive names for your plugin and commands
+- Always include DESCRIPTION metadata in every .bsl file
+- Keep scripts focused on one task each
+- Use OUTPUT = false for automation scripts, toggle to true
+  only for commands the user should see
+- Always end scripts with EXIT
+- Generate SHA files for every .bsl file
+- Test your plugin before distributing:
+    buffy --check my-plugin/index.bsl
+- Version your packages using the VERSION metadata
+- Document your commands in the index.bsl help text
+
+
+9. EXAMPLE: COMPLETE PLUGIN
+================================================================================
+
+See the my-plugin/ directory in this template folder for a complete,
+working example with SHA checksums.
+
+  my-plugin/
+    index.bsl             Default entry point (help text)
+    index.bsl.sha256      SHA-256 for index.bsl
+    hello.bsl             Greeting command
+    hello.bsl.sha256      SHA-256 for hello.bsl
+
+To install this example:
+  cd /path/to/template
+  buffy --install my-plugin
+  buffy my-plugin
+  buffy my-plugin hello
+
+================================================================================

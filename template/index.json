@@ -1,0 +1,11 @@
+{
+    "name": "my-plugin",
+    "description": "Example Buffy plugin package - replace with your own commands.",
+    "version": "1.0.0",
+    "author": "Your Name",
+    "commands": ["index", "hello"],
+    "dependencies": [],
+    "tags": ["example", "template", "utility"],
+    "repository": "https://github.com/your-username/your-plugin-repo",
+    "install_path": "packages/my-plugin"
+}
