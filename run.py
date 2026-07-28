@@ -20,6 +20,7 @@ Usage:
 
 import sys
 import os
+import re
 import argparse
 import textwrap
 
@@ -42,6 +43,8 @@ def main():
               python run.py --train
               python run.py --save-state state.json
               python run.py --resume state.json --train
+              python run.py --learn existing-script.bsl --save-state state.json
+              python run.py "backup my files" --learn --save-state state.json
         """),
     )
 
@@ -97,6 +100,25 @@ def main():
         metavar="FILE",
         help="Resume from a previously saved training state FILE",
     )
+    parser.add_argument(
+        "--learn",
+        metavar="FILE",
+        nargs="?",
+        const="__generated__",
+        help="Import a .bsl file (or the generated script) as a custom training example. "
+             "Reads the file, parses metadata, and adds it to the trainer's custom corpus. "
+             "Use --save-state to persist the updated corpus.",
+    )
+    parser.add_argument(
+        "--learn-name",
+        metavar="NAME",
+        help="Override the name for the learned example (default: derived from filename or prompt)",
+    )
+    parser.add_argument(
+        "--learn-desc",
+        metavar="DESC",
+        help="Override the description for the learned example (default: parsed from BSL metadata)",
+    )
 
     args = parser.parse_args()
 
@@ -123,6 +145,11 @@ def main():
             print(f"\\nAvailable tags: {', '.join(summary['corpus']['tags'])}")
             if summary['corpus']['custom_names']:
                 print(f"Custom examples: {', '.join(summary['corpus']['custom_names'])}")
+        return
+
+    # ── Learn mode: import a .bsl file (no prompt) ──
+    if args.learn and args.learn != "__generated__" and not args.prompt:
+        _learn_from_file(trainer, args.learn, args)
         return
 
     # ── Save state and exit (no generation) ──
@@ -175,6 +202,14 @@ def main():
         save = input(f"\nSave to {result['name']}? [Y/n]: ").strip().lower()
         if save != "n":
             _write_to_file(result["name"], result["source"])
+
+    # ── Learn mode: import the generated script ──
+    if args.learn == "__generated__":
+        _learn_generated_script(trainer, result, args)
+
+    # ── Learn mode: also import a file alongside generation ──
+    if args.learn and args.learn != "__generated__" and args.prompt:
+        _learn_from_file(trainer, args.learn, args)
 
     # ── Auto-save state if --save-state was given ──
     if args.save_state:
@@ -236,6 +271,16 @@ def interactive_loop(args, trainer=None):
                 trainer.export_corpus_json(filepath)
             continue
 
+        if prompt.lower().startswith("learn"):
+            # Learn a .bsl file from interactive mode
+            parts = prompt.split(None, 1)
+            if len(parts) > 1:
+                _learn_from_file(trainer, parts[1].strip(), 
+                                 argparse.Namespace(save_state=None, learn_name=None, learn_desc=None))
+            else:
+                print("Usage: learn <file.bsl>  — Import a .bsl file as a training example")
+            continue
+
         # Generate
         result = generate_bsl(prompt, author="AI Generated", trainer=trainer)
         validation = validate_bsl(result["source"])
@@ -256,6 +301,171 @@ def interactive_loop(args, trainer=None):
         if save == "y":
             _write_to_file(result["name"], result["source"])
             print(f"  Saved to {result['name']}\n")
+
+
+# ── BSL Metadata Parser (for --learn) ──────────────────────────────────────
+
+def _parse_bsl_file(filepath: str) -> dict:
+    """
+    Parse a .bsl file and extract metadata for training.
+
+    Returns a dict with:
+      - name: filename stem
+      - description: from DESCRIPTION metadata
+      - source: full file content
+      - tags: auto-generated from description and commands
+      - dependencies: shell commands mentioned in RUN lines
+      - args: argument names derived from ${N} usage
+    """
+    try:
+        with open(filepath, "r") as f:
+            source = f.read()
+    except IOError as e:
+        print(f"Error reading {filepath}: {e}")
+        sys.exit(1)
+
+    basename = os.path.splitext(os.path.basename(filepath))[0]
+
+    # Extract DESCRIPTION
+    desc_match = re.search(r'DESCRIPTION\s*=\s*"([^"]*)"', source)
+    description = desc_match.group(1) if desc_match else f"Imported from {basename}"
+
+    # Extract dependencies from RUN commands
+    dep_pattern = re.compile(r'RUN\s+"([^"]+)"')
+    run_commands = dep_pattern.findall(source)
+    deps = set()
+    for cmd in run_commands:
+        parts = cmd.split()
+        if parts:
+            base_cmd = parts[0]
+            # Strip path prefixes like ./ or /usr/bin/
+            base_cmd = os.path.basename(base_cmd)
+            if base_cmd and base_cmd not in ("sudo", "echo", "test", "["):
+                deps.add(base_cmd)
+
+    # Extract args from ${N} variable references
+    arg_refs = set(re.findall(r'\$\{(\d)\}', source))
+    args = [f"arg{i}" for i in range(1, int(max(arg_refs)) + 1)] if arg_refs else []
+
+    # Auto-generate tags from description and commands
+    tags = set()
+    desc_lower = description.lower()
+    tag_keywords = {
+        "system": ["system", "os", "kernel", "memory", "disk"],
+        "network": ["network", "ping", "dns", "http", "curl", "wget", "download"],
+        "python": ["python", "pip", "venv", "virtualenv"],
+        "docker": ["docker", "container"],
+        "git": ["git", "repository", "commit"],
+        "backup": ["backup", "archive", "tar"],
+        "development": ["project", "scaffold", "setup", "template"],
+        "maintenance": ["cleanup", "prune", "update", "upgrade"],
+        "diagnostics": ["diagnostic", "info", "report", "usage"],
+        "files": ["file", "directory", "folder", "find", "search"],
+    }
+    for tag, keywords in tag_keywords.items():
+        if any(kw in desc_lower for kw in keywords):
+            tags.add(tag)
+    for dep in deps:
+        if dep in tag_keywords:
+            tags.add(dep)
+
+    return {
+        "name": basename,
+        "description": description,
+        "source": source,
+        "tags": sorted(tags) or ["custom"],
+        "dependencies": sorted(deps),
+        "args": args,
+    }
+
+
+def _learn_from_file(trainer, filepath: str, args):
+    """
+    Import a .bsl file as a custom training example.
+    Parses metadata automatically and adds to trainer.
+    """
+    info = _parse_bsl_file(filepath)
+
+    name = args.learn_name if hasattr(args, "learn_name") and args.learn_name else info["name"]
+    description = args.learn_desc if hasattr(args, "learn_desc") and args.learn_desc else info["description"]
+
+    trainer.add_example(
+        name=name,
+        description=description,
+        source=info["source"],
+        tags=info["tags"],
+        dependencies=info["dependencies"],
+        args=info["args"],
+        prompt_keywords=[description.lower(), name.replace("-", " ")],
+    )
+
+    print(f"\n  Learned: {name}.bsl")
+    print(f"    Description: {description}")
+    print(f"    Tags: {', '.join(info['tags'])}")
+    print(f"    Dependencies: {', '.join(info['dependencies']) or '(none)'}")
+    print(f"    Args: {', '.join(info['args']) or '(none)'}")
+    print(f"  Custom examples: {len(trainer.custom_examples)}")
+
+    learn_save_guidance(trainer, args)
+
+
+def _learn_generated_script(trainer, result: dict, args):
+    """
+    Add the generated script as a custom training example.
+    """
+    name = args.learn_name if hasattr(args, "learn_name") and args.learn_name else result["name"]
+    if name.endswith(".bsl"):
+        name = name[:-4]
+
+    description = args.learn_desc if hasattr(args, "learn_desc") and args.learn_desc else result["description"]
+
+    # Auto-generate tags from the prompt
+    tags = set(["custom", "ai-generated"])
+    for dep in result["dependencies"]:
+        tags.add(dep)
+    prompt_lower = result["description"].lower()
+    if any(kw in prompt_lower for kw in ["system", "os"]):
+        tags.add("system")
+    if any(kw in prompt_lower for kw in ["network", "ping", "dns", "download"]):
+        tags.add("network")
+    if "docker" in prompt_lower:
+        tags.add("docker")
+    if "python" in prompt_lower or "pip" in prompt_lower:
+        tags.add("python")
+    if "git" in prompt_lower:
+        tags.add("git")
+    if "backup" in prompt_lower or "archive" in prompt_lower:
+        tags.add("backup")
+
+    trainer.add_example(
+        name=name,
+        description=description,
+        source=result["source"],
+        tags=sorted(tags),
+        dependencies=result["dependencies"],
+        args=result["args"],
+        prompt_keywords=[description.lower(), name.replace("-", " ")],
+    )
+
+    print(f"\n  Learned generated script: {name}")
+    print(f"    Description: {description}")
+    print(f"    Tags: {', '.join(sorted(tags))}")
+    print(f"  Custom examples: {len(trainer.custom_examples)}")
+
+    learn_save_guidance(trainer, args)
+
+
+def learn_save_guidance(trainer, args):
+    """
+    Show guidance on how to persist the learned example.
+    If --save-state was given, saves automatically; otherwise shows instructions.
+    """
+    save_state = getattr(args, "save_state", None)
+    if save_state:
+        trainer.save_state(save_state)
+    else:
+        print(f"  Tip: Run with --save-state <file> to persist learned examples.")
+        print(f"       Or use --resume to load them in future sessions.")
 
 
 def _print_generation_report(result: dict, validation=None):
@@ -303,6 +513,7 @@ def _print_interactive_help():
     print("    train       Show training corpus summary")
     print("    save        Save training state (save <file> or save bsl-ai-state.json)")
     print("    export      Export corpus (export <file> or export bsl-training.jsonl)")
+    print("    learn       Import a .bsl file as training example (learn <file.bsl>)")
     print()
 
 
