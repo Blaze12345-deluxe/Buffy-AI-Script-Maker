@@ -1,0 +1,536 @@
+================================================================================
+                     BSL AI Script Generator
+              INTERACTIVE TRAINING & IMPROVEMENT GUIDE
+================================================================================
+
+This guide walks through real-world scenarios for training and improving
+the BSL AI using --learn, --save-state, and --resume. By the end, you'll
+know how to teach the AI new skills, fix its mistakes, build up a
+custom corpus over time, and collaborate with others on training.
+
+CONTENTS:
+  1.  Core Concepts
+  2.  Scenario 1: Teaching the AI a New Type of Script
+  3.  Scenario 2: Fixing a Wrong Match
+  4.  Scenario 3: Building a Custom Corpus Over Multiple Sessions
+  5.  Scenario 4: Collaborative Training (Sharing State)
+  6.  Scenario 5: Using Interactive Mode for Rapid Iteration
+  7.  Scenario 6: Bulk Importing an Entire Directory of Scripts
+  8.  Scenario 7: Auditing What the AI Has Learned
+  9.  Tips & Best Practices
+
+
+================================================================================
+1. CORE CONCEPTS
+================================================================================
+
+The BSL AI Script Generator uses a training corpus of ~50 built-in
+example scripts. When you give it a prompt, it scores each example
+against your prompt and adapts the best match.
+
+Three tools let you improve the AI over time:
+
+  --save-state <file>
+      Saves the entire training state (corpus, custom examples,
+      match history) to a JSON file. This is your "save game."
+
+  --resume <file>
+      Loads a previously saved state and continues from where you
+      left off. Custom examples you added are restored.
+
+  --learn [<file>]
+      Imports a .bsl file as a custom training example. If no file
+      is given, the script that was just generated is learned.
+
+  --learn-name <name>
+  --learn-desc <desc>
+      Override the auto-detected name and description for the
+      learned example.
+
+The training loop is:
+
+   1. Generate:   python run.py "your prompt"
+   2. Review:     Is the output correct? Good enough?
+   3. Learn:      python run.py --learn good-script.bsl --save-state state.json
+   4. Resume:     python run.py --resume state.json "your prompt"
+   5. Repeat:     The AI now considers your custom example when matching
+
+
+================================================================================
+2. SCENARIO 1: Teaching the AI a New Type of Script
+================================================================================
+
+Let's say you need a script that monitors website uptime by checking
+HTTP status codes — a use case not covered by the built-in corpus.
+
+Step 1: Generate a first attempt
+---------------------------------
+  python run.py "check website uptime with curl"
+
+The AI will match the closest built-in example (likely network-
+diagnostic or ssl-cert-check). The result might be close but not
+exactly what you want.
+
+Step 2: Save it to a file
+---------------------------------
+  python run.py "check website uptime" --output uptime-check.bsl
+
+Step 3: Manually edit the script to be perfect
+---------------------------------
+  Edit uptime-check.bsl to add:
+  - Loop over multiple URLs
+  - Track success/failure counts
+  - Report a summary at the end
+
+Step 4: Teach the AI your improved version
+---------------------------------
+  python run.py --learn uptime-check.bsl --save-state state.json
+
+  The parser extracts:
+    Name:        uptime-check
+    Description: (from your DESCRIPTION metadata)
+    Dependencies: curl (from RUN commands)
+    Tags:        network (auto-detected from description)
+    Args:        (from ${N} references)
+
+  Output:
+    Learned: uptime-check.bsl
+      Description: ...
+      Tags: network, custom
+      Dependencies: curl
+      Custom examples: 1
+    Training state saved to state.json
+
+Step 5: Verify the AI now prefers your example
+---------------------------------
+  python run.py --resume state.json "check website uptime"
+
+  The match score for uptime-check should now be higher than any
+  built-in example because your custom example's keywords and
+  description match the prompt closely.
+
+Step 6: Repeat for improvement
+---------------------------------
+  Generate a variant:
+    python run.py --resume state.json "check multiple urls" --learn
+
+  The --learn flag (without a file) automatically learns the
+  generated result. Your corpus grows with each iteration.
+
+
+WHAT HAPPENED INTERNALLY:
+  - The BSLAITrainer added your uptime-check to its custom_examples list
+  - On save_state(), it serialized the full corpus + your example to JSON
+  - On resume, it restored everything including hit_count tracking
+  - Future matches score against both built-in AND custom examples
+
+
+================================================================================
+3. SCENARIO 2: Fixing a Wrong Match
+================================================================================
+
+Sometimes the AI matches the wrong example. Say you type:
+
+  python run.py "extract a compressed archive"
+
+And it matches "backup-directory" (score: 33) instead of the
+"extract-archive" example you want. The output is a backup script
+rather than an extraction script.
+
+Step 1: Check what it matched
+---------------------------------
+  python run.py "extract a compressed archive"
+
+  Look at the Generation Report:
+    Best match:      backup-directory (score: 33)
+
+  The AI is confused because "backup" involves tar and "extract"
+  also involves tar.
+
+Step 2: Generate the correct script
+---------------------------------
+  python run.py --resume state.json "extract a compressed archive"
+
+  If the generator already gives you something close enough, save it.
+
+  If you have a correct extract-archive.bsl already, skip to step 4.
+
+Step 3: Manually create or obtain the correct version
+---------------------------------
+  Write a proper extract-archive.bsl that handles zip, tar.gz,
+  tar.bz2, etc.
+
+Step 4: Teach the AI the correct version with a helpful description
+---------------------------------
+  python run.py --learn extract-archive.bsl \
+      --learn-name "extract-archive" \
+      --learn-desc "Extracts various archive formats automatically based on file extension" \
+      --save-state state.json
+
+  The --learn-name and --learn-desc overrides let you fix any
+  auto-parsed metadata that doesn't match what you want users to
+  type.
+
+Step 5: Verify the fix
+---------------------------------
+  python run.py --resume state.json "extract archive file"
+
+  Now the AI should match your custom extract-archive example
+  with a higher score than backup-directory.
+
+Step 6 (optional): Add better prompt keywords
+---------------------------------
+  If the AI still matches the wrong one, edit state.json directly
+  (or use --learn-name and --learn-desc) to adjust the keywords.
+  The prompt_keywords field is what drives matching.
+
+  You can also improve your custom example's description to include
+  more distinctive words like "unzip", "untar", "decompress" that
+  won't overlap with backup terminology.
+
+
+
+WHAT HAPPENED INTERNALLY:
+  The trainer records match frequency via record_match(). Over time,
+  the hit_count shows which examples users actually want. This helps
+  you identify which examples need better keywords.
+
+
+================================================================================
+4. SCENARIO 3: Building a Custom Corpus Over Multiple Sessions
+================================================================================
+
+You have a set of custom scripts for your team's workflow. You want
+to build them up gradually across days or weeks.
+
+Day 1: Start with the basics
+---------------------------------
+  # Generate and learn a custom deployment script
+  python run.py "deploy to staging server" --output deploy-staging.bsl
+  # (edit deploy-staging.bsl to perfection)
+  python run.py --learn deploy-staging.bsl --save-state my-corp-state.json
+
+Day 2: Resume and add more
+---------------------------------
+  # Load yesterday's work
+  python run.py --resume my-corp-state.json --train
+  # Shows: 50 examples (+ 1 custom)
+
+  # Generate another script
+  python run.py --resume my-corp-state.json \
+      "rollback to previous version" \
+      --learn \
+      --save-state my-corp-state.json
+
+  # The --learn flag learns the generated output, and --save-state
+  # updates the state file in one command.
+
+Day 3: Add a batch of scripts
+---------------------------------
+  # Each command loads the latest state, adds one script, and saves.
+  python run.py --resume my-corp-state.json --learn team-scripts/backup-db.bsl \
+      --save-state my-corp-state.json
+  python run.py --resume my-corp-state.json --learn team-scripts/health-check.bsl \
+      --save-state my-corp-state.json
+  python run.py --resume my-corp-state.json --learn team-scripts/audit-log.bsl \
+      --save-state my-corp-state.json
+
+  Your custom corpus now has 4 examples integrated with the 50
+  built-in ones.
+
+Day 4: Share your trained AI
+---------------------------------
+  The my-corp-state.json file is portable. Team members can use it:
+
+  python run.py --resume my-corp-state.json "deploy to staging"
+  python run.py --resume my-corp-state.json "backup database"
+
+
+WHAT HAPPENED INTERNALLY:
+  Each --learn call adds to custom_examples. Each --save-state
+  serializes the entire trainer. Each --resume restores it.
+  The state file contains the full source of all examples, so it's
+  self-contained — you don't need the original .bsl files after
+  saving.
+
+
+================================================================================
+5. SCENARIO 4: Collaborative Training (Sharing State)
+================================================================================
+
+Multiple people on a team can contribute to the same training state.
+
+Trainer Alice creates the base:
+---------------------------------
+  python run.py --learn alice-scripts/deploy.bsl --save-state team-state.json
+  git add team-state.json && git commit -m "Add deploy script"
+  git push
+
+Developer Bob improves it:
+---------------------------------
+  git pull
+  python run.py --resume team-state.json --learn bob-fixes/healthcheck.bsl \
+      --save-state team-state.json
+  git add team-state.json && git commit -m "Add healthcheck from Bob"
+  git push
+
+CI pipeline tests the state:
+---------------------------------
+  git pull
+  python run.py --resume team-state.json --train
+  # Verify custom examples count is correct
+  python run.py --resume team-state.json "deploy" --check
+  # Validate the output script syntax
+
+MERGE CONFLICTS:
+  State files are JSON. If two people edit them simultaneously,
+  you'll get a merge conflict. Resolve by keeping both sets of
+  custom_examples:
+
+  1. Open the conflicted state.json
+  2. Find the "custom_examples" array
+  3. Merge both versions' entries (remove duplicates by name)
+  4. Update the counts in "corpus" section
+  5. git add state.json && git commit
+
+
+================================================================================
+6. SCENARIO 5: Using Interactive Mode for Rapid Iteration
+================================================================================
+
+Interactive mode lets you generate, review, and learn in a loop
+without re-running the CLI each time.
+
+Start interactive mode with a saved state:
+---------------------------------
+  python run.py --resume my-state.json --interactive
+
+  Output:
+    ============================================================
+      BSL AI Generator - Interactive Mode
+    ============================================================
+    Type a description of the script you want to generate.
+    Type "quit" to exit, "help" for commands.
+    ============================================================
+
+Rapid iteration loop:
+---------------------------------
+  >> monitor docker container cpu usage
+    Generated: docker-stats.bsl (matched: docker-stats, score: 35)
+    ... (script output) ...
+    Save to docker-stats.bsl? [y/N]: y
+
+  >> docker container stats with alerts
+    Generated: docker-stats.bsl (matched: docker-stats, score: 28)
+    ... (script output) ...
+    Save to docker-stats-alert.bsl? [y/N]: y
+
+  >> learn /path/to/docker-stats-alert.bsl
+    Learned: docker-stats-alert.bsl
+      Tags: docker, containers
+      Custom examples: 1
+
+  >> save my-state.json
+    Training state saved to my-state.json
+
+  >> train
+    Corpus: 50 examples, 15 tags, 6 templates
+
+  >> monitor docker
+    Generated: docker-stats-alert.bsl (matched: docker-stats-alert, score: 18)
+    ... (now matches your custom example!) ...
+
+  >> quit
+
+
+QUICK REFERENCE FOR INTERACTIVE COMMANDS:
+
+  <prompt>             Generate a script from a description
+  learn <file.bsl>     Import a .bsl file as a training example
+  save <file>          Save the current state (default: bsl-ai-state.json)
+  train                Show training corpus summary (includes custom count)
+  export <file>        Export corpus as JSON or JSONL
+  help                 Show all commands
+  quit                 Exit interactive mode
+
+
+================================================================================
+7. SCENARIO 6: Bulk Importing an Entire Directory of Scripts
+================================================================================
+
+You have a directory of .bsl scripts you want to import all at once.
+
+Step 1: Write a quick loop
+---------------------------------
+  # First script creates the state file; subsequent ones append.
+  first=true
+  for script in my-scripts/*.bsl; do
+    if [ "$first" = true ]; then
+      python run.py --learn "$script" --save-state my-bulk-state.json
+      first=false
+    else
+      python run.py --resume my-bulk-state.json --learn "$script" \
+          --save-state my-bulk-state.json
+    fi
+  done
+
+  Each iteration loads the state, adds one script, and saves — so
+  the next iteration picks up all previously imported examples.
+
+Step 2: Verify everything was imported
+---------------------------------
+  python run.py --resume my-bulk-state.json --train
+
+  The output should show:
+    Training examples: 50 (+ 8 custom)
+    Custom examples: script1, script2, script3, ...
+
+Step 3: Check for naming collisions
+---------------------------------
+  python run.py --resume my-bulk-state.json --train
+
+  If two scripts have the same name, the second one overrides the
+  first in custom_examples. Use --learn-name to give them unique
+  names if needed.
+
+Step 4: Export the enhanced corpus
+---------------------------------
+  python run.py --resume my-bulk-state.json
+  python bsl_train.py --resume my-bulk-state.json --export-dataset my-full-dataset.jsonl
+
+  The JSONL will include all 50 built-in + your custom examples.
+
+
+================================================================================
+8. SCENARIO 7: Auditing What the AI Has Learned
+================================================================================
+
+Check the current state of the trainer:
+
+  python run.py --train
+  --------------------------------------------------
+  BSL AI Trainer v1.0.0
+  Trained at: 2026-07-28T12:00:00
+  Training examples: 50
+  Tags: 15
+  Template patterns: 6
+  Known instructions: 6
+  Dependencies tracked: 25
+  Match history: 142 total matches
+  Available tags: backup, database, diagnostics, disk, docker, files, ...
+
+If custom examples are loaded:
+
+  python run.py --resume my-state.json --train
+  --------------------------------------------------
+  Training examples: 50 (+ 3 custom)
+  Custom examples: uptime-check, deploy-staging, health-check
+
+Check match frequency (which examples get used most):
+
+  The hit_count is tracked in the state file. After many sessions:
+
+  python -c "
+  import json
+  s = json.load(open('my-state.json'))
+  hits = s['training_metrics']['hit_count']
+  for name, count in sorted(hits.items(), key=lambda x: -x[1])[:10]:
+      print(f'  {name:30s}: {count} matches')
+  "
+
+  Output example:
+    system-info                  : 23 matches
+    disk-usage                   : 18 matches
+    pip-env                      : 15 matches
+    docker-cleanup               : 12 matches
+    network-diagnostic           : 10 matches
+    uptime-check (custom)        : 8 matches
+    ...
+
+This tells you which examples are most useful and which might
+need better keywords.
+
+
+================================================================================
+9. TIPS & BEST PRACTICES
+================================================================================
+
+DESIGNING GOOD EXAMPLES
+
+  - Write clear, specific DESCRIPTIONS.
+    BAD:  "Does backup stuff"
+    GOOD: "Backs up a PostgreSQL database with compression and logging"
+
+  - Choose distinctive keywords that don't overlap with other examples.
+    If you have "backup-database" and "backup-files", make sure their
+    descriptions use different wording (e.g., "SQL dump" vs "file archive").
+
+  - Use unique script names. The name is a primary matching signal.
+    BAD:  my-script.bsl (reused everywhere)
+    GOOD: deploy-staging-server.bsl
+
+  - Include usage examples in comments within the .bsl file.
+    // Usage: buffy deploy-staging <branch>
+    This helps future readers and adds context to the training data.
+
+TRAINING WORKFLOW
+
+  - Save state often. --save-state is cheap and incremental.
+  - After each --learn, verify with a generation test.
+  - Keep state files in version control for team collaboration.
+  - Name your state files descriptively: team-state.json, personal.json
+
+WHEN TO LEARN VS NOT LEARN
+
+  - Learn when: the output is correct and represents a distinct pattern
+    you want the AI to remember.
+  - Don't learn when: the output is almost identical to an existing
+    example — it wastes corpus space and might confuse matching.
+  - Don't learn when: the script has syntax errors. The AI learns
+    mistakes too! Always --check before --learn.
+
+  Good workflow:
+    python run.py "monitor disk io" --check --quiet > disk-io.bsl
+    # Review disk-io.bsl manually
+    python run.py --learn disk-io.bsl --save-state state.json
+
+MATCH SCORE THRESHOLDS
+
+  50+   Exact match — the prompt nearly matches an example's keywords
+  20-49 Strong match — good adaptation likely
+  10-19 Decent match — usable but may need tweaks
+  5-9   Weak match — generated from scratch with limited relevance
+  0-4   No match — generated entirely from scratch
+
+  If scores are consistently low for your use case, add more custom
+  examples with better keywords.
+
+EXPORTING YOUR WORK
+
+  After building up a custom corpus:
+
+  # Export as JSONL for LLM fine-tuning:
+  bash compile-to-gguf.sh --train --verify
+
+  # The state file is included in the export:
+  #   gguf-export/bsl-ai-state.json
+
+  # Export as structured JSON:
+  python bsl_train.py --resume state.json --export my-corpus.json
+
+  # Share your state file directly:
+  python run.py --resume my-corpus.json --train
+  # Other developers can now generate scripts matching your patterns.
+
+CORPUS SIZE GUIDELINES
+
+  50 scripts   - Good general coverage (built-in default)
+  60-75        - Decent custom coverage for a team
+  75-100       - Rich, specialized corpus
+  100+         - Consider pruning rarely-matched examples to keep
+                matching fast and accurate
+
+  To prune: delete entries from custom_examples in state.json,
+  or simply stop saving/loading them.
+
+================================================================================
