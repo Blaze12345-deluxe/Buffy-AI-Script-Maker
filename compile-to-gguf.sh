@@ -18,6 +18,7 @@
 # Usage:
 #   ./compile-to-gguf.sh                          # Export all formats
 #   ./compile-to-gguf.sh --train                   # Also train/save state first
+#   ./compile-to-gguf.sh --verify                  # Verify the GGUF container
 #   ./compile-to-gguf.sh --output-dir ./gguf-data  # Custom output directory
 #   ./compile-to-gguf.sh --help                    # Show this help
 # =============================================================================
@@ -27,6 +28,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_DIR="${SCRIPT_DIR}/gguf-export"
 TRAIN_FIRST=false
+VERIFY=false
 
 # ── Parse Arguments ──────────────────────────────────────────────────────────
 
@@ -44,9 +46,13 @@ while [[ $# -gt 0 ]]; do
             OUTPUT_DIR="$2"
             shift 2
             ;;
+        --verify)
+            VERIFY=true
+            shift
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--train] [--output-dir <dir>]"
+            echo "Usage: $0 [--train] [--verify] [--output-dir <dir>]"
             exit 1
             ;;
     esac
@@ -117,231 +123,68 @@ echo "│                                                               │"
 echo "└───────────────────────────────────────────────────────────────┘"
 echo ""
 
-# ── Step 4: Create GGUF metadata and conversion config ───────────────────────
+# ── Step 4: Build the GGUF container ────────────────────────────────────────
 
-echo "┌─ Step 4: Creating GGUF metadata and conversion config ────────┐"
+echo "┌─ Step 4: Building GGUF container ────────────────────────────┐"
 echo "│                                                               │"
 
-# Create GGUF metadata file
-cat > "${OUTPUT_DIR}/gguf-model-config.json" << 'GGUFEOF'
-{
-    "description": "BSL AI Script Generator - Fine-Tuning Configuration",
-    "format": "gguf",
-    "version": "1.0.0",
+GGUF_FILE="${OUTPUT_DIR}/bsl-ai-minimal.gguf"
+VERIFY_FLAG=""
+if [ "$VERIFY" = true ]; then
+    VERIFY_FLAG="--verify"
+fi
 
-    "model": {
-        "name": "BSL-AI-Script-Generator",
-        "architecture": "llama",
-        "context_length": 2048,
-        "vocab_size": 32000,
-        "hidden_size": 4096,
-        "intermediate_size": 11008,
-        "num_attention_heads": 32,
-        "num_hidden_layers": 32
-    },
+python3 "${SCRIPT_DIR}/build-gguf-container.py" \
+    --dataset "${JSONL_FILE}" \
+    --corpus "${CORPUS_FILE}" \
+    --output "${GGUF_FILE}" \
+    ${VERIFY_FLAG}
 
-    "training": {
-        "dataset_format": "jsonl",
-        "dataset_file": "bsl-training-dataset.jsonl",
-        "prompt_template": {
-            "instruction": "Create a BSL script that {instruction}",
-            "response_prefix": "\n\nHere is a valid BSL script:\n",
-            "response_suffix": "\n\nThis script follows BSL conventions."
-        },
-        "recommended_base_model": [
-            "codellama-7b",
-            "deepseek-coder-6.7b",
-            "mistral-7b"
-        ]
-    },
-
-    "gguf_conversion": {
-        "tool": "llama.cpp",
-        "repository": "https://github.com/ggerganov/llama.cpp",
-        "steps": [
-            "1. Clone llama.cpp: git clone https://github.com/ggerganov/llama.cpp",
-            "2. Place base model in llama.cpp/models/",
-            "3. Fine-tune using the JSONL dataset",
-            "4. Run convert.py to create .gguf file",
-            "5. Run quantize for 4-bit or 8-bit quantization"
-        ],
-        "convert_command": "python llama.cpp/convert.py --outfile bsl-ai.gguf --ctx 2048 model.pt",
-        "quantize_command": "llama.cpp/quantize bsl-ai.gguf bsl-ai-q4_0.gguf q4_0"
-    },
-
-    "inference": {
-        "prompt_prefix": "### Instruction:\nCreate a BSL script that ",
-        "prompt_suffix": "\n\n### Response:\nHere is a valid BSL script:\n",
-        "stop_tokens": ["\n###"]
-    }
-}
-GGUFEOF
-
-echo "│  Created: gguf-model-config.json                              │"
-echo "│                                                               │"
-
-# Create conversion helper script
-cat > "${OUTPUT_DIR}/convert-to-gguf.py" << 'PYEOF'
-#!/usr/bin/env python3
-"""
-convert-to-gguf.py - BSL AI → GGUF Conversion Helper
-
-This script packages the BSL training data into a format compatible
-with llama.cpp's GGUF conversion pipeline.
-
-Usage:
-    python convert-to-gguf.py                   # Show instructions
-    python convert-to-gguf.py --prepare         # Prepare dataset for training
-    python convert-to-gguf.py --stats           # Show dataset statistics
-
-For actual GGUF conversion, follow the instructions in gguf-model-config.json
-using llama.cpp (https://github.com/ggerganov/llama.cpp).
-"""
-
-import json
-import os
-import sys
-from collections import Counter
-
-
-# Find dataset relative to this script's location
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DATASET_FILE = os.path.join(SCRIPT_DIR, "bsl-training-dataset.jsonl")
-
-
-def show_instructions():
-    print("=" * 60)
-    print("  BSL AI → GGUF Conversion Guide")
-    print("=" * 60)
-    print()
-    print("  This dataset can be used to fine-tune an LLM to generate")
-    print("  BSL scripts. The workflow is:")
-    print()
-    print("  1. Choose a base model (recommended: CodeLlama, DeepSeek Coder)")
-    print("  2. Clone llama.cpp:")
-    print("     git clone https://github.com/ggerganov/llama.cpp")
-    print()
-    print("  3. Fine-tune using the dataset:")
-    print("     python -m llama.cpp.finetune \\")
-    print("       --model base-model.pt \\")
-    print(f"       --dataset {DATASET_FILE} \\")
-    print("       --output-dir ./finetuned")
-    print()
-    print("  4. Convert to GGUF:")
-    print("     python llama.cpp/convert.py \\")
-    print("       --outfile bsl-ai.gguf \\")
-    print("       --ctx 2048 \\")
-    print("       ./finetuned/model.pt")
-    print()
-    print("  5. Quantize (optional, reduces size):")
-    print("     llama.cpp/quantize bsl-ai.gguf \\")
-    print("       bsl-ai-q4_0.gguf q4_0")
-    print()
-    print("  6. Run inference:")
-    print("     ./llama.cpp/main -m bsl-ai-q4_0.gguf \\")
-    print('       -p "Create a BSL script that monitors disk space"')
-    print()
-
-
-def show_stats():
-    if not os.path.exists(DATASET_FILE):
-        print(f"Dataset file not found: {DATASET_FILE}")
-        print("Run 'compile-to-gguf.sh' first to create the dataset.")
-        return
-
-    with open(DATASET_FILE, "r") as f:
-        lines = f.readlines()
-
-    examples = [json.loads(line) for line in lines if line.strip()]
-
-    # Analyze dataset
-    output_lengths = [len(ex.get("output", "")) for ex in examples]
-    instruction_topics = Counter()
-    for ex in examples:
-        instr = ex.get("instruction", "").lower()
-        for topic in ["system", "python", "docker", "git", "backup",
-                       "network", "disk", "download", "file", "project"]:
-            if topic in instr:
-                instruction_topics[topic] += 1
-
-    print("=" * 60)
-    print("  Dataset Statistics")
-    print("=" * 60)
-    print(f"  Total examples:      {len(examples)}")
-    print(f"  Avg output length:   {sum(output_lengths) // len(output_lengths)} chars")
-    print(f"  Min output length:   {min(output_lengths)} chars")
-    print(f"  Max output length:   {max(output_lengths)} chars")
-    print()
-    print("  Topics:")
-    for topic, count in instruction_topics.most_common():
-        print(f"    {topic:12s}: {count} examples")
-    print()
-    print(f"  Recommended base models:")
-    print("    - codellama/CodeLlama-7b-Python-hf")
-    print("    - deepseek-ai/deepseek-coder-6.7b-instruct")
-    print("    - mistralai/Mistral-7B-Instruct-v0.2")
-    print()
-
-
-if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        if sys.argv[1] == "--stats":
-            show_stats()
-        elif sys.argv[1] == "--prepare":
-            show_instructions()
-        else:
-            print(f"Unknown option: {sys.argv[1]}")
-            print("Usage: python convert-to-gguf.py [--stats | --prepare]")
-    else:
-        show_instructions()
-PYEOF
-chmod +x "${OUTPUT_DIR}/convert-to-gguf.py"
-
-echo "│  Created: convert-to-gguf.py (helper script)                  │"
 echo "│                                                               │"
 echo "└───────────────────────────────────────────────────────────────┘"
 echo ""
 
 # ── Step 5: Create a README for the export ──────────────────────────────────
 
+echo "┌─ Step 5: Creating README for the export ──────────────────────┐"
+echo "│                                                               │"
+
 cat > "${OUTPUT_DIR}/README-GGUF.txt" << READMEEOF
 ================================================================================
                      BSL AI - GGUF Export
 ================================================================================
 
-This directory contains the exported training data and configuration for
-converting the BSL AI Script Generator into GGUF format.
+This directory contains the exported training data and a valid GGUF
+container for the BSL AI Script Generator.
 
 GGUF is the file format used by llama.cpp and other LLM inference engines.
 It stores quantized neural network weights for efficient inference.
 
 FILES IN THIS DIRECTORY:
+  bsl-ai-minimal.gguf           - Valid GGUF v3 container with metadata
+                                  (metadata only, no tensors/weights)
   bsl-training-dataset.jsonl    - Training examples in JSONL format
                                   (one JSON object per line)
   bsl-corpus.json               - Full structured corpus with metadata
-  gguf-model-config.json        - GGUF model configuration and conversion
-                                  instructions
-  convert-to-gguf.py            - Helper script for dataset analysis and
-                                  conversion guidance
   bsl-ai-state.json             - (if --train used) Saved AI training state
 
-USING THE DATASET:
+The .gguf file is a real GGUF binary that can be inspected with any
+GGUF-compatible tool. Use --verify to validate the file structure.
+
+USING THE DATASET FOR ACTUAL FINE-TUNING:
 
   1. Choose a base model (CodeLlama, DeepSeek Coder, or similar)
   2. Use the JSONL dataset for fine-tuning
-  3. Convert to GGUF using llama.cpp's convert.py
+  3. Convert the fine-tuned model to GGUF using llama.cpp's convert.py
   4. Quantize for smaller file size (optional)
   5. Run inference with llama.cpp
-
-For detailed instructions, run:
-  python convert-to-gguf.py
-
-For dataset statistics:
-  python convert-to-gguf.py --stats
-
-See gguf-model-config.json for the recommended fine-tuning parameters.
 ================================================================================
 READMEEOF
+
+echo "│  Created: README-GGUF.txt                                      │"
+echo "│                                                               │"
+echo "└───────────────────────────────────────────────────────────────┘"
+echo ""
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 
@@ -355,9 +198,9 @@ ls -lh "${OUTPUT_DIR}/" | awk '{print "│    " $9 " (" $5 ")"}' | while read -r
 done
 echo "│                                                               │"
 echo "│  Next steps:                                                  │"
-echo "│    1. Review bsl-training-dataset.jsonl                       │"
-echo "│    2. Fine-tune a base model with the dataset                 │"
-echo "│    3. Convert to GGUF with llama.cpp's convert.py             │"
+echo "│    1. Inspect the .gguf file with any GGUF-compatible tool    │"
+echo "│    2. Use bsl-training-dataset.jsonl for LLM fine-tuning      │"
+echo "│    3. Convert the fine-tuned model to GGUF with llama.cpp     │"
 echo "│    4. Run inference with llama.cpp or any GGUF-compatible tool│"
 echo "│                                                               │"
 echo "└───────────────────────────────────────────────────────────────┘"
