@@ -2459,6 +2459,91 @@ INSTRUCTION_PATTERNS = {
 }
 
 
+def validate_corpus() -> dict:
+    """
+    Validate all scripts in the training corpus for syntax issues.
+
+    Uses bsl_tester.validate_bsl() to check each script and returns
+    a detailed report with per-script results and aggregate stats.
+
+    Returns:
+        dict with:
+          - total: int
+          - passed: int
+          - failed: int
+          - errors: int (total count across all scripts)
+          - warnings: int (total count across all scripts)
+          - details: list of per-script results
+    """
+    from bsl_tester import validate_bsl
+
+    details = []
+    total_errors = 0
+    total_warnings = 0
+    passed = 0
+    failed = 0
+
+    print("=" * 60)
+    print("  BSL Training Corpus Validation")
+    print("=" * 60)
+    print()
+
+    for i, ex in enumerate(TRAINING_EXAMPLES, 1):
+        name = ex["name"]
+        source = ex.get("source", "")
+
+        result = validate_bsl(source)
+
+        if result.is_valid:
+            passed += 1
+        else:
+            failed += 1
+
+        total_errors += len(result.errors)
+        total_warnings += len(result.warnings)
+
+        status = "PASS" if result.is_valid else "FAIL"
+        warn_str = f" ({len(result.warnings)}w)" if result.warnings else ""
+        err_str = f" ({len(result.errors)}e)" if result.errors else ""
+        print(f"  [{status}] {name:<30s}{err_str}{warn_str}")
+
+        details.append({
+            "name": name,
+            "is_valid": result.is_valid,
+            "errors": [{"line": e.line, "message": e.message} for e in result.errors],
+            "warnings": [{"line": w.line, "message": w.message} for w in result.warnings],
+            "stats": result.stats,
+        })
+
+    print()
+    print("-" * 60)
+    print(f"  Total scripts:   {len(TRAINING_EXAMPLES)}")
+    print(f"  Passed:          {passed}")
+    print(f"  Failed:          {failed}")
+    print(f"  Total errors:    {total_errors}")
+    print(f"  Total warnings:  {total_warnings}")
+    print("-" * 60)
+    print()
+
+    if failed > 0:
+        print("Failed scripts:")
+        for d in details:
+            if not d["is_valid"]:
+                print(f"  {d['name']}:")
+                for e in d["errors"]:
+                    print(f"    Line {e['line']}: {e['message']}")
+        print()
+
+    return {
+        "total": len(TRAINING_EXAMPLES),
+        "passed": passed,
+        "failed": failed,
+        "errors": total_errors,
+        "warnings": total_warnings,
+        "details": details,
+    }
+
+
 def get_examples_by_tag(tag: str) -> List[Dict]:
     """Return all training examples that match a given tag."""
     return [ex for ex in TRAINING_EXAMPLES if tag in ex["tags"]]

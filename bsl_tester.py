@@ -316,7 +316,10 @@ def _identify_instruction(content: str) -> Optional[dict]:
     Returns a dict with type and parsed data, or None if unrecognized.
     """
     # Check for VERSION = "..." (metadata)
-    meta_match = re.match(r'^\s*(VERSION|AUTHOR|DESCRIPTION|OUTPUT)\s*=\s*(.*?)\s*$', content)
+    # Note: OUTPUT is intentionally excluded here — it's both a metadata field
+    # AND a runtime instruction toggle that can appear multiple times throughout
+    # a script. The OUTPUT toggle regex below handles all occurrences correctly.
+    meta_match = re.match(r'^\s*(VERSION|AUTHOR|DESCRIPTION)\s*=\s*(.*?)\s*$', content)
     if meta_match:
         key = meta_match.group(1)
         value = meta_match.group(2).strip()

@@ -426,11 +426,17 @@ def main():
             filepath = sys.argv[2] if len(sys.argv) > 2 else "bsl-training.jsonl"
             trainer.export_training_dataset_jsonl(filepath)
 
+        elif sys.argv[1] == "--validate-corpus":
+            from training_data import validate_corpus
+            results = validate_corpus()
+            if results["failed"] > 0:
+                sys.exit(1)
+
         else:
             print(f"Unknown option: {sys.argv[1]}")
             print("Usage: python bsl_train.py [--export [file] | --export-format |")
             print("       --export-all [dir] | --save-state [file] | --resume <file> |")
-            print("       --export-dataset [file]]")
+            print("       --export-dataset [file] | --validate-corpus]")
 
     else:
         # Default: show summary
