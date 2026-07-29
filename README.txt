@@ -380,14 +380,23 @@ INTERACTIVE MODE COMMANDS
 LEARN MORE & RESOURCES
 ================================================================================
 
-| Resource | Link |
-|----------|------|
-| Buffy CLI source + docs   | github.com/Blaze12345-deluxe/BuffyCLI |
-| Buffy CLI documentation   | github.com/Blaze12345-deluxe/BuffyCLI/tree/master/docs |
-| Buffy Plugins repository  | github.com/Blaze12345-deluxe/Buffy-Plugins |
-| Training guide (advanced) | TRAINING_GUIDE.txt (in this repository) |
-| Plugin scaffold generator | github.com/Blaze12345-deluxe/Buffy-AI-Script-Maker/tree/master/template |
-| Official releases         | github.com/Blaze12345-deluxe/BuffyCLI/releases |
+  Buffy CLI source + docs:
+    https://github.com/Blaze12345-deluxe/BuffyCLI
+
+  Buffy CLI documentation:
+    https://github.com/Blaze12345-deluxe/BuffyCLI/tree/master/docs
+
+  Buffy Plugins repository:
+    https://github.com/Blaze12345-deluxe/Buffy-Plugins
+
+  Training guide (advanced):
+    TRAINING_GUIDE.txt (in this repository)
+
+  Plugin scaffold generator:
+    https://github.com/Blaze12345-deluxe/Buffy-AI-Script-Maker/tree/master/template
+
+  Official releases:
+    https://github.com/Blaze12345-deluxe/BuffyCLI/releases
 
 
 ================================================================================
