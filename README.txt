@@ -14,6 +14,33 @@ exported as a valid GGUF binary container.
 
 
 ================================================================================
+RELATED RESOURCES
+================================================================================
+
+This tool generates scripts for the Buffy CLI Automation Framework.
+The following resources provide context on the framework and its
+plugin ecosystem:
+
+  Buffy CLI (framework + documentation):
+    https://github.com/Blaze12345-deluxe/BuffyCLI
+
+  Buffy CLI documentation (docs/ folder):
+    https://github.com/Blaze12345-deluxe/BuffyCLI/tree/master/docs
+
+    SCRIPT_LANGUAGE.txt   - Complete BSL syntax, variables, best practices
+    INSTALLATION.txt      - Installing Buffy from source, cargo, or binary
+    COMMANDS.txt          - All CLI flags, repo management, aliases
+    CONFIGURATION.txt     - ~/.buffy/ layout, package format, SHA files
+    TROUBLESHOOTING.txt   - Common problems and diagnostics
+
+  Buffy Plugins (community plugin repository):
+    https://github.com/Blaze12345-deluxe/Buffy-Plugins
+
+  Plugin scaffold generator:
+    https://github.com/Blaze12345-deluxe/Buffy-AI-Script-Maker/tree/master/template
+
+
+================================================================================
 QUICK START
 ================================================================================
 
@@ -123,6 +150,12 @@ HOW IT WORKS
    - Variable usage
    - Dangerous command detection
    - Optional integration with 'buffy --check'
+
+   After generation, you can also validate against the full BSL
+   specification using Buffy CLI commands:
+     buffy --check script.bsl       (syntax validation)
+     buffy --validate script.bsl    (metadata completeness)
+     buffy --run script.bsl         (test execution)
 
 
 ================================================================================
@@ -243,6 +276,11 @@ Each example includes:
   - Shell dependencies
   - Expected arguments
 
+For the complete BSL language specification (syntax rules, metadata
+fields, variable resolution order, error handling, command resolution
+priorities, and best practices), see the SCRIPT_LANGUAGE.txt guide:
+  https://github.com/Blaze12345-deluxe/BuffyCLI/blob/master/docs/SCRIPT_LANGUAGE.txt
+
 Export the corpus for external AI systems:
     python bsl_train.py --export bsl-corpus.json
 
@@ -339,10 +377,25 @@ INTERACTIVE MODE COMMANDS
 
 
 ================================================================================
+LEARN MORE & RESOURCES
+================================================================================
+
+| Resource | Link |
+|----------|------|
+| Buffy CLI source + docs   | github.com/Blaze12345-deluxe/BuffyCLI |
+| Buffy CLI documentation   | github.com/Blaze12345-deluxe/BuffyCLI/tree/master/docs |
+| Buffy Plugins repository  | github.com/Blaze12345-deluxe/Buffy-Plugins |
+| Training guide (advanced) | TRAINING_GUIDE.txt (in this repository) |
+| Plugin scaffold generator | github.com/Blaze12345-deluxe/Buffy-AI-Script-Maker/tree/master/template |
+| Official releases         | github.com/Blaze12345-deluxe/BuffyCLI/releases |
+
+
+================================================================================
 REQUIREMENTS
 ================================================================================
 
   - Python 3.6+ (no external dependencies required for generation)
   - Optional: 'buffy' binary in PATH for full validation
   - Optional: llama.cpp for actual model fine-tuning (see README-GGUF.txt)
+
 ================================================================================
